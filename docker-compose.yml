@@ -1,0 +1,64 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped   # авто-старт после ребута LXC
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: digital_academy
+      MYSQL_USER: academy
+      MYSQL_PASSWORD: academy_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/migrations/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./backend
+    restart: unless-stopped   # повтор при сбое + авто-старт после ребута
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_USER: academy
+      DB_PASSWORD: academy_pass
+      DB_NAME: digital_academy
+      JWT_SECRET: ${JWT_SECRET:-dev_secret_change_me}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:8000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-False}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-False}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-info@msdig.kz}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "python seed.py && uvicorn main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped   # авто-старт после ребута LXC
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app          # живой код с хоста (правки видны сразу)
+      - /app/node_modules        # но node_modules — из образа (Linux), не с Windows
+    environment:
+      CHOKIDAR_USEPOLLING: "true"          # надёжный watch для Windows/WSL2
+      BACKEND_ORIGIN: "http://backend:8000" # прокси /api внутри сети Docker
+    depends_on:
+      - backend
+
+volumes:
+  db_data:
